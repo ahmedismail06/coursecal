@@ -77,7 +77,7 @@ def process_syllabus(file_bytes: bytes, filename: str, user_start_date: str, use
         """
         
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=[
                 types.Content(
                     role="user",

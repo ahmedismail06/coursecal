@@ -55,7 +55,7 @@ export default function App() {
     formData.append('assignment_reminder', hwMins);
 
     try {
-      const response = await fetch('https://coursecal.onrender.com', {
+      const response = await fetch('https://coursecal-backend.onrender.com/generate-calendar', {
         method: 'POST',
         body: formData,
       });

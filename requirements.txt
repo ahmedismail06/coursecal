@@ -1,0 +1,20 @@
+# --- Core Backend ---
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+
+# --- AI & Parsing ---
+# Note: The code uses 'genai.Client', which requires this specific package, 
+# NOT 'google-generativeai'.
+google-genai>=0.3.0
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+
+# --- Scheduling & Calendar ---
+ics>=0.7.2
+python-dateutil>=2.8.2
+
+# --- Google Calendar Sync (Optional) ---
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.111.0
+google-auth>=2.27.0

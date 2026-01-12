@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types 
 from pydantic import BaseModel
 
-# --- DATA STRUCTURE (EXACTLY AS BEFORE) ---
+# --- DATA STRUCTURE ---
 class Lecture(BaseModel):
     day: str            
     start_time: str     
@@ -47,7 +47,6 @@ def process_syllabus(file_bytes: bytes, filename: str, user_start_date: str, use
 
     client = genai.Client(api_key=api_key)
     
-    # Save temp file because Gemini Client likes file paths
     temp_path = Path(f"temp_{filename}")
     with open(temp_path, "wb") as f:
         f.write(file_bytes)
@@ -56,24 +55,39 @@ def process_syllabus(file_bytes: bytes, filename: str, user_start_date: str, use
         mime = mimetypes.guess_type(temp_path)[0] or "application/pdf"
         uploaded_file = client.files.upload(file=temp_path, config={'mime_type': mime})
         
-        # --- YOUR PERFECT PROMPT ---
+        # --- PROMPT WITH "CATCH-ALL" LOGIC ---
         prompt = f"""
-        Extract course data from this syllabus into strict JSON.
-        
+        You are a highly logical academic scheduler. Your goal is to map every single assignment to a date or rule, leaving nothing with "No Date".
+
         CONTEXT:
         - Semester Start: {user_start_date}
         - Semester End: {user_end_date}
         
-        INSTRUCTIONS:
-        1. **School**: Extract the university name.
-        2. **Lectures**: Split multiple days into separate objects. Find the address.
-        3. **Exams & Quizzes (CRITICAL)**: 
-           - If an exam has a specific TIME WINDOW (e.g., "Midterm: Oct 15, 7:00 PM - 9:00 PM"), you MUST fill in:
-             * `exam_date`: "2025-10-15"
-             * `start_time`: "19:00"
-             * `end_time`: "21:00"
-           - Do NOT put this in `due_date`. `due_date` is only for homework deadlines.
-        4. **Assignments**: If an item repeats, set `recurring=True`.
+        LOGIC RULES (FOLLOW STRICTLY):
+        
+        1. **FIND THE "DEFAULT" BUCKETS**:
+           - Syllabi often use rules like: "Pre-lecture stuff is due Monday, EVERYTHING ELSE is due Tuesday."
+           - This is a strict logic gate.
+           - If you find a task (like "Learning Curve" or "Post-class quiz") and it doesn't say "Monday", **YOU MUST APPLY THE "EVERYTHING ELSE" RULE (Tuesday).**
+           - Do not leave it as null. Infer the "Tuesday" rule based on the exclusion principle.
+
+        2. **CONNECT SPECIFIC TASKS TO GENERIC CATEGORIES**:
+           - If the syllabus says "Pre-lecture materials due Monday", and you see an assignment "Podcast Assignment", categorize it as "Pre-lecture" -> Due Monday.
+           - If the syllabus says "Module Homework due Tuesday", and you see "Learning Curve" listed under the Module section, categorize it as "Homework" -> Due Tuesday.
+
+        3. **IMPLIED TIMES**:
+           - "Midnight", "End of Day" -> 11:59 PM (23:59).
+           - "Before Class" -> Use the Lecture Start Time.
+
+        4. **RECURRING FIELDS**:
+           - For these rule-based items, set:
+             * `recurring`: true
+             * `recurring_day`: "Monday" or "Tuesday" (based on the rule)
+             * `recurring_time`: The time specified in the rule (e.g., 11:59 PM).
+
+        5. **FINAL CHECK**:
+           - If an assignment has `due_date: null` and `recurring: false`, LOOK AGAIN.
+           - Does it fit the "Everything else" rule? If yes, apply it.
         """
         
         response = client.models.generate_content(

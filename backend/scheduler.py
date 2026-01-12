@@ -9,9 +9,6 @@ from dateutil.rrule import rrule, WEEKLY, MO, TU, WE, TH, FR, SA, SU
 from ics import Calendar, Event
 from ics.grammar.parse import ContentLine, Container
 
-TZ_NAME = "America/Chicago" 
-TZ = ZoneInfo(TZ_NAME) 
-
 DAY_MAP = {
     "mon": MO, "tue": TU, "wed": WE, "thu": TH, "fri": FR, "sat": SA, "sun": SU
 }
@@ -21,7 +18,7 @@ TYPE_MAP = {
     "Quiz": "QZ", "Homework": "HW", "Exam": "EXAM", "Midterm": "MID", "Final": "FIN"
 }
 
-# --- HELPERS (Copied exactly) ---
+# --- HELPERS ---
 def parse_days_from_string(day_str):
     found = []
     clean_str = day_str.lower().replace(",", " ").replace("/", " ")
@@ -43,17 +40,22 @@ def parse_time_robustly(time_str):
     except:
         return time(0, 0)
 
-def create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=None, reminder_mins=0):
+# Pass TZ explicitly here
+def create_calendar_event(title, start_dt, end_dt, loc, desc, tz_info, rrule_end=None, reminder_mins=0):
     e = Event()
     e.name = title
-    e.begin = start_dt.replace(tzinfo=TZ)
-    e.end = end_dt.replace(tzinfo=TZ)
+    
+    # Force timezone application
+    e.begin = start_dt.replace(tzinfo=tz_info)
+    e.end = end_dt.replace(tzinfo=tz_info)
+    
     e.location = loc
     e.description = desc
     
     # 1. RRULE
     if rrule_end:
-        end_utc = datetime.combine(rrule_end, time(23,59,59)).replace(tzinfo=TZ).astimezone(ZoneInfo("UTC"))
+        # RRULE 'UNTIL' must be UTC
+        end_utc = datetime.combine(rrule_end, time(23,59,59)).replace(tzinfo=tz_info).astimezone(ZoneInfo("UTC"))
         until_str = end_utc.strftime('%Y%m%dT%H%M%SZ')
         e.extra.append(ContentLine(name='RRULE', value=f"FREQ=WEEKLY;UNTIL={until_str}"))
 
@@ -73,9 +75,14 @@ def create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=None, re
     return e
 
 # --- MAIN GENERATOR ---
-def generate_ics(course_data, reminders):
+# Add 'timezone_str' argument
+def generate_ics(course_data, reminders, timezone_str="America/Chicago"):
+    try:
+        TZ = ZoneInfo(timezone_str)
+    except Exception:
+        TZ = ZoneInfo("America/Chicago") # Fallback
+
     cal = Calendar()
-    # Convert Pydantic to dict
     data = course_data.dict() 
 
     sem_start = parser.parse(data['semester_start']).date()
@@ -100,7 +107,7 @@ def generate_ics(course_data, reminders):
             loc = lec.get('full_address') if lec.get('full_address') else f"{lec.get('building', '')}, {school}".strip()
             desc = f"Type: Lecture\nRoom: {lec.get('room', 'N/A')}\nSection: {lec.get('section', 'N/A')}"
             
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=sem_end, reminder_mins=reminders['lecture'])
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, TZ, rrule_end=sem_end, reminder_mins=reminders['lecture'])
             cal.events.add(event)
 
     # 2. PROCESS ASSIGNMENTS / EXAMS
@@ -126,7 +133,7 @@ def generate_ics(course_data, reminders):
             else:
                 start_dt = datetime.combine(ex_date, t_start)
                 end_dt = start_dt + timedelta(minutes=120)
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, reminder_mins=mins)
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, TZ, reminder_mins=mins)
             cal.events.add(event)
 
         # CASE B: RECURRING
@@ -137,7 +144,7 @@ def generate_ics(course_data, reminders):
                 t_due = parse_time_robustly(task.get('recurring_time') or '23:59')
                 end_dt = datetime.combine(first_date, t_due)
                 start_dt = end_dt - timedelta(minutes=30)
-                event = create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=sem_end, reminder_mins=mins)
+                event = create_calendar_event(title, start_dt, end_dt, loc, desc, TZ, rrule_end=sem_end, reminder_mins=mins)
                 cal.events.add(event)
         
         # CASE C: DEADLINE ONLY
@@ -145,7 +152,7 @@ def generate_ics(course_data, reminders):
             end_dt = parser.parse(task['due_date'])
             if end_dt.tzinfo is None: end_dt = end_dt.replace(tzinfo=TZ)
             start_dt = end_dt - timedelta(minutes=120 if is_exam else 30)
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, reminder_mins=mins)
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, TZ, reminder_mins=mins)
             cal.events.add(event)
 
     return "".join(cal.serialize_iter())

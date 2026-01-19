@@ -18,7 +18,6 @@ TYPE_MAP = {
     "Quiz": "QZ", "Homework": "HW", "Exam": "EXAM", "Midterm": "MID", "Final": "FIN"
 }
 
-# --- HELPERS ---
 def parse_days_from_string(day_str):
     found = []
     clean_str = day_str.lower().replace(",", " ").replace("/", " ")
@@ -40,22 +39,23 @@ def parse_time_robustly(time_str):
     except:
         return time(0, 0)
 
-# Pass TZ explicitly here
-def create_calendar_event(title, start_dt, end_dt, loc, desc, tz_info, rrule_end=None, reminder_mins=0):
+# We pass the SCHOOL'S timezone here
+def create_calendar_event(title, start_dt, end_dt, loc, desc, school_tz, rrule_end=None, reminder_mins=0):
     e = Event()
     e.name = title
     
-    # Force timezone application
-    e.begin = start_dt.replace(tzinfo=tz_info)
-    e.end = end_dt.replace(tzinfo=tz_info)
+    # Apply the SCHOOL'S timezone to the start/end times
+    # This ensures 10:00 AM CT converts to 11:00 AM ET on your phone
+    e.begin = start_dt.replace(tzinfo=school_tz)
+    e.end = end_dt.replace(tzinfo=school_tz)
     
     e.location = loc
     e.description = desc
     
     # 1. RRULE
     if rrule_end:
-        # RRULE 'UNTIL' must be UTC
-        end_utc = datetime.combine(rrule_end, time(23,59,59)).replace(tzinfo=tz_info).astimezone(ZoneInfo("UTC"))
+        # We must convert the UNTIL date to UTC because the iCalendar spec requires it
+        end_utc = datetime.combine(rrule_end, time(23,59,59)).replace(tzinfo=school_tz).astimezone(ZoneInfo("UTC"))
         until_str = end_utc.strftime('%Y%m%dT%H%M%SZ')
         e.extra.append(ContentLine(name='RRULE', value=f"FREQ=WEEKLY;UNTIL={until_str}"))
 
@@ -74,13 +74,12 @@ def create_calendar_event(title, start_dt, end_dt, loc, desc, tz_info, rrule_end
         
     return e
 
-# --- MAIN GENERATOR ---
-# Add 'timezone_str' argument
-def generate_ics(course_data, reminders, timezone_str="America/Chicago"):
+def generate_ics(course_data, reminders, school_timezone="America/Chicago"):
+    # Load the School's Timezone
     try:
-        TZ = ZoneInfo(timezone_str)
+        TZ = ZoneInfo(school_timezone)
     except Exception:
-        TZ = ZoneInfo("America/Chicago") # Fallback
+        TZ = ZoneInfo("America/Chicago") 
 
     cal = Calendar()
     data = course_data.dict() 
@@ -97,6 +96,7 @@ def generate_ics(course_data, reminders, timezone_str="America/Chicago"):
             t_start = parse_time_robustly(lec['start_time'])
             t_end = parse_time_robustly(lec['end_time'])
             
+            # Combine Date + Time
             start_dt = datetime.combine(first_date, t_start)
             end_dt = datetime.combine(first_date, t_end)
             if t_end < t_start: end_dt += timedelta(days=1)
@@ -149,8 +149,15 @@ def generate_ics(course_data, reminders, timezone_str="America/Chicago"):
         
         # CASE C: DEADLINE ONLY
         elif task.get('due_date'):
+            # Parse normally
             end_dt = parser.parse(task['due_date'])
-            if end_dt.tzinfo is None: end_dt = end_dt.replace(tzinfo=TZ)
+            # If the parsed date is naive (no timezone), force it to School Time
+            if end_dt.tzinfo is None: 
+                end_dt = end_dt.replace(tzinfo=TZ)
+            else:
+                # If it already has a timezone, ensure it aligns with School Time
+                end_dt = end_dt.astimezone(TZ)
+                
             start_dt = end_dt - timedelta(minutes=120 if is_exam else 30)
             event = create_calendar_event(title, start_dt, end_dt, loc, desc, TZ, reminder_mins=mins)
             cal.events.add(event)

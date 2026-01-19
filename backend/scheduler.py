@@ -40,26 +40,37 @@ def parse_time_robustly(time_str):
     except:
         return time(0, 0)
 
-def create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=None, reminder_mins=0):
+# Create event with TZID reference (not UTC offset)
+def create_calendar_event(title, start_dt, end_dt, loc, desc, tz_name, rrule_end=None, reminder_mins=0):
     e = Event()
     e.name = title
     
-    # --- THE FIX: FLOATING TIME ---
-    # We strip the timezone info (.replace(tzinfo=None))
-    # This creates a "Floating" event. 
-    # If the calculated time is 10:30, it stays 10:30 forever.
-    e.begin = start_dt.replace(tzinfo=None)
-    e.end = end_dt.replace(tzinfo=None)
+    # Create naive datetimes (no timezone info attached)
+    # Then manually add TZID parameter
+    start_naive = datetime.combine(start_dt.date(), start_dt.time())
+    end_naive = datetime.combine(end_dt.date(), end_dt.time())
+    
+    e.begin = start_naive
+    e.end = end_naive
+    
+    # Add TZID parameter to DTSTART and DTEND
+    # This tells calendar apps to interpret times in the specified timezone
+    for extra in e.extra:
+        if extra.name == "DTSTART":
+            extra.params["TZID"] = [tz_name]
+        elif extra.name == "DTEND":
+            extra.params["TZID"] = [tz_name]
     
     e.location = loc
     e.description = desc
     
+    # 1. RRULE
     if rrule_end:
-        # RRULE UNTIL must also be floating (YYYYMMDDTHHMMSS)
-        end_floating = datetime.combine(rrule_end, time(23,59,59))
-        until_str = end_floating.strftime('%Y%m%dT%H%M%S')
+        # For RRULE UNTIL, use local timezone date at end of day
+        until_str = rrule_end.strftime('%Y%m%d')
         e.extra.append(ContentLine(name='RRULE', value=f"FREQ=WEEKLY;UNTIL={until_str}"))
 
+    # 2. VALARM
     if reminder_mins > 0:
         alarm = Container("VALARM")
         alarm.append(ContentLine(name='ACTION', value='DISPLAY'))
@@ -75,31 +86,24 @@ def create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=None, re
     return e
 
 # --- MAIN GENERATOR ---
-def generate_ics(course_data, reminders, school_tz_str="America/Chicago", user_tz_str="America/New_York"):
-    
-    # 1. Setup Timezones
+def generate_ics(course_data, reminders, timezone_str="America/Chicago"):
     try:
-        SCHOOL_TZ = ZoneInfo(school_tz_str)
-        USER_TZ = ZoneInfo(user_tz_str)
-    except:
-        SCHOOL_TZ = ZoneInfo("America/Chicago")
-        USER_TZ = ZoneInfo("America/New_York")
+        TZ = ZoneInfo(timezone_str)
+    except Exception:
+        TZ = ZoneInfo("America/Chicago")
+        timezone_str = "America/Chicago"
 
     cal = Calendar()
+    
+    # Add VTIMEZONE component to calendar
+    # This is crucial for DST handling
+    cal.extra.append(ContentLine(name='X-WR-TIMEZONE', value=timezone_str))
+    
     data = course_data.dict() 
 
     sem_start = parser.parse(data['semester_start']).date()
     sem_end = parser.parse(data['semester_end']).date()
     school = data.get('school_name', '')
-
-    # Helper to convert School Time -> User Time
-    def convert_to_user_time(base_date, time_obj):
-        # 1. Create datetime in School Time
-        dt_school = datetime.combine(base_date, time_obj).replace(tzinfo=SCHOOL_TZ)
-        # 2. Convert to User Time
-        dt_user = dt_school.astimezone(USER_TZ)
-        # 3. Return the datetime (we will strip tz later in create_calendar_event)
-        return dt_user
 
     # 1. PROCESS LECTURES
     for lec in data.get('lectures', []):
@@ -109,12 +113,9 @@ def generate_ics(course_data, reminders, school_tz_str="America/Chicago", user_t
             t_start = parse_time_robustly(lec['start_time'])
             t_end = parse_time_robustly(lec['end_time'])
             
-            # Convert logic
-            start_dt = convert_to_user_time(first_date, t_start)
-            end_dt = convert_to_user_time(first_date, t_end)
-            
-            if t_end < t_start: 
-                end_dt += timedelta(days=1)
+            start_dt = datetime.combine(first_date, t_start)
+            end_dt = datetime.combine(first_date, t_end)
+            if t_end < t_start: end_dt += timedelta(days=1)
 
             title = f"{data.get('course_code')} {TYPE_MAP.get('Lecture', 'LEC')}"
             if lec.get('section'): title += f" {lec.get('section')}"
@@ -122,7 +123,7 @@ def generate_ics(course_data, reminders, school_tz_str="America/Chicago", user_t
             loc = lec.get('full_address') if lec.get('full_address') else f"{lec.get('building', '')}, {school}".strip()
             desc = f"Type: Lecture\nRoom: {lec.get('room', 'N/A')}\nSection: {lec.get('section', 'N/A')}"
             
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=sem_end, reminder_mins=reminders['lecture'])
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, timezone_str, rrule_end=sem_end, reminder_mins=reminders['lecture'])
             cal.events.add(event)
 
     # 2. PROCESS ASSIGNMENTS / EXAMS
@@ -141,16 +142,14 @@ def generate_ics(course_data, reminders, school_tz_str="America/Chicago", user_t
         if task.get('exam_date') and task.get('start_time'):
             ex_date = parser.parse(task['exam_date']).date()
             t_start = parse_time_robustly(task['start_time'])
-            
-            start_dt = convert_to_user_time(ex_date, t_start)
-            
             if task.get('end_time'):
                 t_end = parse_time_robustly(task['end_time'])
-                end_dt = convert_to_user_time(ex_date, t_end)
+                start_dt = datetime.combine(ex_date, t_start)
+                end_dt = datetime.combine(ex_date, t_end)
             else:
+                start_dt = datetime.combine(ex_date, t_start)
                 end_dt = start_dt + timedelta(minutes=120)
-                
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, reminder_mins=mins)
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, timezone_str, reminder_mins=mins)
             cal.events.add(event)
 
         # CASE B: RECURRING
@@ -159,25 +158,19 @@ def generate_ics(course_data, reminders, school_tz_str="America/Chicago", user_t
             for _, day_rule in days_found:
                 first_date = get_next_weekday(sem_start, day_rule)
                 t_due = parse_time_robustly(task.get('recurring_time') or '23:59')
-                
-                end_dt = convert_to_user_time(first_date, t_due)
+                end_dt = datetime.combine(first_date, t_due)
                 start_dt = end_dt - timedelta(minutes=30)
-                
-                event = create_calendar_event(title, start_dt, end_dt, loc, desc, rrule_end=sem_end, reminder_mins=mins)
+                event = create_calendar_event(title, start_dt, end_dt, loc, desc, timezone_str, rrule_end=sem_end, reminder_mins=mins)
                 cal.events.add(event)
         
         # CASE C: DEADLINE ONLY
         elif task.get('due_date'):
-            # Parse strictly as School Time first
-            raw_dt = parser.parse(task['due_date'])
-            if raw_dt.tzinfo is None:
-                raw_dt = raw_dt.replace(tzinfo=SCHOOL_TZ)
-            
-            # Convert to User Time
-            end_dt = raw_dt.astimezone(USER_TZ)
+            end_dt = parser.parse(task['due_date'])
+            # Use naive datetime
+            if end_dt.tzinfo is not None:
+                end_dt = end_dt.replace(tzinfo=None)
             start_dt = end_dt - timedelta(minutes=120 if is_exam else 30)
-            
-            event = create_calendar_event(title, start_dt, end_dt, loc, desc, reminder_mins=mins)
+            event = create_calendar_event(title, start_dt, end_dt, loc, desc, timezone_str, reminder_mins=mins)
             cal.events.add(event)
 
     return "".join(cal.serialize_iter())

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Upload, FileText, Calendar, Clock, Download, Loader2, AlertCircle, ChevronDown, CheckCircle2, ArrowLeft, ListTodo, Globe, Pencil, Save, X, MapPin } from 'lucide-react';
+import { Upload, FileText, Calendar, Clock, Download, Loader2, AlertCircle, ChevronDown, CheckCircle2, ArrowLeft, ListTodo, Globe, Pencil, Save, X } from 'lucide-react';
 
 export default function App() {
   const [step, setStep] = useState('upload'); 
@@ -15,12 +15,11 @@ export default function App() {
   // Edit Mode State
   const [editingIndex, setEditingIndex] = useState(null);
 
-  // Dates & Timezones
+  // Dates & Timezone
   const [dates, setDates] = useState({
     start: '2025-09-02',
     end: '2025-12-15',
-    schoolTimezone: 'America/Chicago', // Where the school is
-    userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone // Where YOU are (auto-detected)
+    timezone: 'America/Chicago'
   });
 
   const [reminders, setReminders] = useState({
@@ -60,6 +59,7 @@ export default function App() {
     setAnalyzedData({ ...analyzedData, assignments: updatedAssignments });
   };
 
+  // Toggle Recurring Mode
   const toggleRecurring = (index) => {
     const updatedAssignments = [...analyzedData.assignments];
     const item = updatedAssignments[index];
@@ -84,6 +84,7 @@ export default function App() {
     formData.append('end_date', dates.end);
 
     try {
+      // UPDATED URL HERE
       const response = await fetch('https://coursecal.onrender.com/analyze-syllabus', { 
         method: 'POST', 
         body: formData 
@@ -116,8 +117,7 @@ export default function App() {
 
     const payload = {
       course_data: filteredData,
-      school_timezone: dates.schoolTimezone, // Pass School Location
-      user_timezone: dates.userTimezone,     // Pass User Location
+      timezone: dates.timezone,
       reminders: {
         lecture: reminders.lecture.value * reminders.lecture.unit,
         exam: reminders.exam.value * reminders.exam.unit,
@@ -126,6 +126,7 @@ export default function App() {
     };
 
     try {
+      // UPDATED URL HERE
       const response = await fetch('https://coursecal.onrender.com/generate-ics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -246,33 +247,12 @@ export default function App() {
                     <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase">End</label>
                     <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="w-full p-2 border border-blue-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400 outline-none" />
                   </div>
-                  
-                  {/* TIMEZONE SECTION */}
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase flex items-center gap-1">
-                        <Globe size={10} /> School Timezone (Class time)
-                    </label>
-                    <div className="relative mb-2">
-                        <select 
-                        value={dates.schoolTimezone} 
-                        onChange={e => setDates({...dates, schoolTimezone: e.target.value})} 
-                        className="w-full p-2 border border-blue-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400 outline-none appearance-none"
-                        >
-                        <option value="America/New_York">Eastern Time (New York)</option>
-                        <option value="America/Chicago">Central Time (Chicago)</option>
-                        <option value="America/Denver">Mountain Time (Denver)</option>
-                        <option value="America/Los_Angeles">Pacific Time (LA)</option>
-                        </select>
-                        <ChevronDown className="absolute right-2 top-3 text-blue-400 pointer-events-none" size={14} />
-                    </div>
-
-                    <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase flex items-center gap-1">
-                        <MapPin size={10} /> Your Timezone (Where you are)
-                    </label>
+                    <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase flex items-center gap-1"><Globe size={10} /> Timezone</label>
                     <div className="relative">
                         <select 
-                        value={dates.userTimezone} 
-                        onChange={e => setDates({...dates, userTimezone: e.target.value})} 
+                        value={dates.timezone} 
+                        onChange={e => setDates({...dates, timezone: e.target.value})} 
                         className="w-full p-2 border border-blue-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400 outline-none appearance-none"
                         >
                         <option value="America/New_York">Eastern Time (New York)</option>

@@ -248,7 +248,7 @@ export default function App() {
                     <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="w-full p-2 border border-blue-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-400 outline-none" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase flex items-center gap-1"><Globe size={10} /> Timezone</label>
+                    <label className="text-[10px] font-bold text-gray-500 block mb-1 uppercase flex items-center gap-1"><Globe size={10} /> University Timezone</label>
                     <div className="relative">
                         <select 
                         value={dates.timezone} 
